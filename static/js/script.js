@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = '/api';
 
 // DOM elements
 const taskInput = document.getElementById('taskInput');
@@ -56,6 +56,8 @@ async function addTask() {
             taskDueDate.value = '';
             loadTasks();
             addChatMessage('DUNGEON', 'Quest inscribed in the eternal ledger.');
+        } else {
+            throw new Error('Failed to add task');
         }
     } catch (error) {
         console.error('Error adding task:', error);
@@ -77,17 +79,22 @@ async function updateTask(id, updates) {
         if (response.ok) {
             loadTasks();
             return true;
+        } else {
+            console.error('Failed to update task:', response.status);
+            return false;
         }
     } catch (error) {
         console.error('Error updating task:', error);
+        return false;
     }
-    return false;
 }
 
 // Mark task as complete
 async function completeTask(id) {
     if (await updateTask(id, { completed: true })) {
         addChatMessage('DUNGEON', `Quest #${id} has been vanquished!`);
+    } else {
+        addChatMessage('DUNGEON', 'The dungeon magic failed to complete this quest...');
     }
 }
 
@@ -101,10 +108,13 @@ async function deleteTask(id) {
         if (response.ok) {
             loadTasks();
             addChatMessage('DUNGEON', `Quest #${id} has been erased from history.`);
+        } else {
+            console.error('Failed to delete task:', response.status);
+            addChatMessage('DUNGEON', 'The dungeon refuses to forget this quest...');
         }
     } catch (error) {
         console.error('Error deleting task:', error);
-        addChatMessage('DUNGEON', 'The dungeon refuses to forget this quest...');
+        addChatMessage('DUNGEON', 'The dungeon magic failed to erase this quest...');
     }
 }
 
@@ -179,6 +189,9 @@ function formatDate(dateString) {
 async function loadTasks() {
     try {
         const response = await fetch(`${API_BASE}/tasks`);
+        if (!response.ok) {
+            throw new Error('Failed to load tasks');
+        }
         const data = await response.json();
         
         // Store tasks for reference
@@ -209,12 +222,31 @@ async function processChat() {
     chatInput.disabled = true;
     
     try {
-        const aiResponse = simulateAIResponse(message);
-        addChatMessage('DUNGEON', `I shall ${aiResponse.function} for you.`);
-        await executeAIFunction(aiResponse);
+        // Send message to backend for AI processing
+        const response = await fetch(`${API_BASE}/chat`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ message: message })
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to get AI response');
+        }
+        
+        const aiResponse = await response.json();
+        
+        // Display the friendly reply
+        addChatMessage('DUNGEON', aiResponse.friendly_reply);
+        
+        // Execute the action from the AI
+        await executeAIFunction(aiResponse.json);
+        
         chatInput.value = '';
     } catch (error) {
-        addChatMessage('DUNGEON', error.message);
+        console.error('Error processing chat:', error);
+        addChatMessage('DUNGEON', 'The ancient magic falters... try again.');
         chatInput.value = '';
     } finally {
         chatInput.disabled = false;
@@ -222,182 +254,80 @@ async function processChat() {
     }
 }
 
-// Find task ID by position in the list
-function findTaskIdByPosition(position) {
-    const index = parseInt(position) - 1;
-    if (index >= 0 && index < currentTasks.length) {
-        return currentTasks[index].id;
-    }
-    return null;
-}
-
-// Parse date from natural language
-function parseDateFromText(text) {
-    const today = new Date();
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    if (text.includes('today')) {
-        return today.toISOString().split('T')[0];
-    } else if (text.includes('tomorrow')) {
-        return tomorrow.toISOString().split('T')[0];
-    }
-    
-    // Try to parse specific date formats
-    const dateMatch = text.match(/\d{4}-\d{2}-\d{2}/);
-    if (dateMatch) {
-        return dateMatch[0];
-    }
-    
-    // Try to parse month/day/year format
-    const usDateMatch = text.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    if (usDateMatch) {
-        const [_, month, day, year] = usDateMatch;
-        return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-    }
-    
-    return null;
-}
-
-// Parse priority from text
-function parsePriorityFromText(text) {
-    if (text.includes('high') || text.includes('urgent')) return 'high';
-    if (text.includes('medium') || text.includes('common')) return 'medium';
-    if (text.includes('low') || text.includes('minor')) return 'low';
-    return null;
-}
-
-// Simulate AI response - SIMPLIFIED AND FIXED
-function simulateAIResponse(message) {
-    const lowerMsg = message.toLowerCase();
-    
-    // ADD TASK
-    if (lowerMsg.includes('add') || lowerMsg.includes('create') || lowerMsg.includes('new')) {
-        let description = message.replace(/add|create|new|task|quest/gi, '').trim();
-        
-        const priority = parsePriorityFromText(lowerMsg) || 'medium';
-        const dueDate = parseDateFromText(lowerMsg);
-        
-        if (!description) {
-            throw new Error("What quest would you have me inscribe?");
-        }
-        
-        return { 
-            function: "addTask", 
-            parameters: { 
-                description: description,
-                priority: priority,
-                due_date: dueDate
-            } 
-        };
-    }
-    // CHANGE DUE DATE - SIMPLIFIED THIS PART
-    else if (lowerMsg.includes('date') || lowerMsg.includes('due') || lowerMsg.includes('change date') || lowerMsg.includes('set date')) {
-        const positionMatch = message.match(/\d+/);
-        const dueDate = parseDateFromText(lowerMsg);
-        
-        if (positionMatch && dueDate) {
-            const taskId = findTaskIdByPosition(positionMatch[0]);
-            if (taskId) {
-                return { 
-                    function: "setDueDate", 
-                    parameters: { 
-                        task_id: taskId,
-                        due_date: dueDate
-                    } 
-                };
-            }
-        }
-        throw new Error("I need both a quest number and a date. Example: 'change date of quest 1 to tomorrow'");
-    }
-    // CHANGE PRIORITY
-    else if (lowerMsg.includes('priority') || lowerMsg.includes('urgent') || lowerMsg.includes('important')) {
-        const positionMatch = message.match(/\d+/);
-        const priority = parsePriorityFromText(lowerMsg);
-        
-        if (positionMatch && priority) {
-            const taskId = findTaskIdByPosition(positionMatch[0]);
-            if (taskId) {
-                return { 
-                    function: "setPriority", 
-                    parameters: { 
-                        task_id: taskId,
-                        priority: priority
-                    } 
-                };
-            }
-        }
-        throw new Error("I need both a quest number and priority level. Example: 'make quest 1 urgent'");
-    }
-    // VIEW TASKS
-    else if (lowerMsg.includes('show') || lowerMsg.includes('view') || 
-             lowerMsg.includes('what') || lowerMsg.includes('get') || lowerMsg.includes('list')) {
-        return { function: "viewTasks", parameters: {} };
-    }
-    // COMPLETE TASK
-    else if (lowerMsg.includes('complete') || lowerMsg.includes('done') || lowerMsg.includes('finish')) {
-        const positionMatch = message.match(/\d+/);
-        if (positionMatch) {
-            const taskId = findTaskIdByPosition(positionMatch[0]);
-            if (taskId) {
-                return { function: "completeTask", parameters: { task_id: taskId } };
-            }
-        }
-        throw new Error("I cannot find that quest. Speak its number.");
-    }
-    // DELETE TASK
-    else if (lowerMsg.includes('delete') || lowerMsg.includes('remove') || lowerMsg.includes('erase')) {
-        const positionMatch = message.match(/\d+/);
-        if (positionMatch) {
-            const taskId = findTaskIdByPosition(positionMatch[0]);
-            if (taskId) {
-                return { function: "deleteTask", parameters: { task_id: taskId } };
-            }
-        }
-        throw new Error("I cannot find that quest. Speak its number.");
-    }
-    
-    throw new Error("The dungeon does not understand. Try 'add [quest]', 'change date of quest 1 to tomorrow', 'make quest 1 urgent', 'complete quest 1', or 'delete quest 1'.");
-}
-
 // Execute the function determined by the AI
-async function executeAIFunction(aiResponse) {
-    switch(aiResponse.function) {
-        case "addTask":
-            taskInput.value = aiResponse.parameters.description;
-            taskPriority.value = aiResponse.parameters.priority;
-            if (aiResponse.parameters.due_date) {
-                taskDueDate.value = aiResponse.parameters.due_date;
-            }
-            await addTask();
-            break;
-        case "viewTasks":
-            await loadTasks();
-            break;
-        case "completeTask":
-            await completeTask(aiResponse.parameters.task_id);
-            break;
-        case "deleteTask":
-            await deleteTask(aiResponse.parameters.task_id);
-            break;
-        case "setPriority":
-            if (await updateTask(aiResponse.parameters.task_id, { priority: aiResponse.parameters.priority })) {
-                const priorityText = {
-                    'high': 'urgent',
-                    'medium': 'common',
-                    'low': 'minor'
-                }[aiResponse.parameters.priority];
-                addChatMessage('DUNGEON', `Quest #${aiResponse.parameters.task_id} is now marked as ${priorityText}.`);
+async function executeAIFunction(action) {
+    switch(action.action) {
+        case "add":
+            // Add a new task
+            const taskData = {
+                description: action.description,
+                priority: action.priority || 'medium',
+                due_date: action.due_date || null
+            };
+            
+            try {
+                const response = await fetch(`${API_BASE}/tasks`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(taskData)
+                });
+                
+                if (response.ok) {
+                    loadTasks();
+                }
+            } catch (error) {
+                console.error('Error adding task via AI:', error);
             }
             break;
-        case "setDueDate":
-            if (await updateTask(aiResponse.parameters.task_id, { due_date: aiResponse.parameters.due_date })) {
-                const dateText = aiResponse.parameters.due_date ? formatDate(aiResponse.parameters.due_date) : 'no time constraint';
-                addChatMessage('DUNGEON', `Quest #${aiResponse.parameters.task_id} now has ${dateText}.`);
+            
+        case "complete":
+            // Complete a task
+            if (action.task_id) {
+                await completeTask(action.task_id);
             }
             break;
+            
+        case "delete":
+            // Delete a task
+            if (action.task_id) {
+                await deleteTask(action.task_id);
+            }
+            break;
+            
+        case "show":
+            // Show tasks with optional filter
+            if (action.filter) {
+                filterTasks(action.filter);
+            } else {
+                loadTasks();
+            }
+            break;
+            
+        case "set_priority":
+            // Change task priority
+            if (action.task_id && action.priority) {
+                await updateTask(action.task_id, { priority: action.priority });
+                loadTasks();
+            }
+            break;
+            
+        case "set_due_date":
+            // Change task due date
+            if (action.task_id && action.due_date) {
+                await updateTask(action.task_id, { due_date: action.due_date });
+                loadTasks();
+            }
+            break;
+            
+        case "chat":
+            // Just conversation, no action needed
+            break;
+            
         default:
-            console.error("Unknown function:", aiResponse.function);
+            console.error("Unknown action:", action.action);
+            loadTasks(); // Fallback to showing all tasks
     }
 }
 

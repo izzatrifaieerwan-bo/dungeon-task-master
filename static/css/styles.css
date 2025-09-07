@@ -146,7 +146,17 @@ body {
     border-left-color: #ff6b00;
 }
 
+.adventurer-message {
+    background: rgba(139, 0, 0, 0.3);
+    border-left-color: #ff6b00;
+}
+
 .ai-message {
+    background: rgba(0, 100, 0, 0.3);
+    border-left-color: #00ff00;
+}
+
+.dungeon-message {
     background: rgba(0, 100, 0, 0.3);
     border-left-color: #00ff00;
 }
